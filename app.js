@@ -9,11 +9,12 @@ const ICONS={
   done:'<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.8 2.8L16 9.5"/>',
   spark:'<path d="M12 3v6M12 15v6M3 12h6M15 12h6M6 6l3 3M15 15l3 3M18 6l-3 3M9 15l-3 3"/>',
   back:'<path d="M15 5l-7 7 7 7"/>',
+  pencil:'<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
   star:'<path d="M12 4l2.5 5.2 5.7.8-4.1 4 1 5.6L12 17l-5.1 2.6 1-5.6-4.1-4 5.7-.8z"/>'
 };
 const ic=(n,s)=>'<svg viewBox="0 0 24 24" width="'+(s||18)+'" height="'+(s||18)+'" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ICONS[n]+'</svg>';
 
-const S={projects:[],milestones:[],tasks:[],routines:[],events:[],auth:'checking',authMsg:'',loadedAt:0,status:'loading',view:'today',pid:null,
+const S={projects:[],milestones:[],tasks:[],routines:[],events:[],renameMs:null,focusId:null,freshMs:null,auth:'checking',authMsg:'',loadedAt:0,status:'loading',view:'today',pid:null,
   pf:'all',hz:'now',urg:false,open:null,confirmDel:null,copy:null,capP:'',editRoutines:false,addProject:false,editProject:false,newColor:'teal',msg:''};
 
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -72,7 +73,7 @@ const upd=(c,id,patch)=>write(c,id,Object.assign({updatedAt:now()},patch),'updat
 function newTask(title,pid,ms,hz){title=String(title||'').trim();if(!title)return;
   write('tasks',null,{title:title,projectId:pid||null,milestoneId:ms||null,horizon:hz||'now',urgent:false,due:null,status:'open',owner:'me',focusDate:null,notes:'',createdAt:now(),updatedAt:now(),doneAt:null,doneBy:null})}
 let flashT=0;
-function flash(m){S.msg=m;clearTimeout(flashT);flashT=setTimeout(()=>{S.msg='';render()},4500);render()}
+function flash(m,ok){const t=document.getElementById('toast');if(!t)return;t.textContent=m;t.className='toast'+(ok?' ok':'');t.hidden=false;clearTimeout(flashT);flashT=setTimeout(()=>{t.hidden=true},5000)}
 function slug(name){let b=String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'project',s=b,i=2;while(S.projects.some(p=>p.id===s)||S.milestones.some(m=>m.id===s))s=b+'-'+(i++);return s}
 
 /* ---------- pieces ---------- */
@@ -88,7 +89,7 @@ function taskRow(t,o){o=o||{};const done=!isOpen(t),p=proj(t.projectId),t0=today
     if(t.notes&&S.open!==t.id)meta.push('<span>Has notes</span>');
   }else meta.push('<span>'+(t.doneBy==='claude'?'Checked off by Claude':'Done')+' · '+esc(fmtDay(t.doneAt))+'</span>');
   const id=esc(t.id),foc=inFocus(t);
-  return '<li class="task'+(done?' done':'')+'">'+
+  return '<li class="task'+(done?' done':'')+'" data-task="'+id+'"'+(S.open===t.id?'':' draggable="true"')+'>'+
     '<button class="cb" data-act="toggle" data-id="'+id+'" aria-pressed="'+done+'" aria-label="'+(done?'Reopen':'Mark done')+': '+esc(t.title)+'">'+ic('check',14)+'</button>'+
     '<div class="tbody"><button class="ttitle" data-act="open" data-id="'+id+'" aria-expanded="'+(S.open===t.id)+'">'+esc(t.title)+'</button>'+
     '<div class="tmeta">'+meta.join('')+'</div>'+(S.open===t.id?editorHTML(t):'')+'</div>'+
@@ -110,8 +111,8 @@ function editorHTML(t){const id=esc(t.id),p=proj(t.projectId),ms=S.milestones.fi
      '<label>Due date<input type="date" id="ed-'+id+'" data-ch="t-due" data-id="'+id+'" value="'+esc(t.due||'')+'"></label>'+
    '</div>'+
    (S.copy&&S.copy.id===t.id?'<textarea class="copybox" id="ec-'+id+'" rows="3" readonly aria-label="Text to copy">'+esc(S.copy.text)+'</textarea>':'')+
-   '<div class="erow"><button class="btn" data-act="copy" data-id="'+id+'">Copy for Claude</button>'+
-   (S.confirmDel===t.id?'<button class="btn danger" data-act="delyes" data-id="'+id+'">Confirm delete</button>':'<button class="btn danger" data-act="del" data-id="'+id+'">Delete</button>')+'</div>'+
+   '<div class="erow"><button class="btn" data-act="send" data-id="'+id+'">'+ic('spark',15)+' Send to Claude</button><span class="gap"></span>'+
+   (S.confirmDel===t.id?'<button class="btn danger" data-act="delyes" data-id="'+id+'">Confirm delete</button>':'<button class="btn danger" data-act="del" data-id="'+id+'">Delete</button>')+'<button class="btn" data-act="open" data-id="'+id+'">Close</button></div>'+
   '</div>';
 }
 function captureHTML(withSelect){return '<form class="capture" data-form="capture"><input type="text" id="cap" name="q" placeholder="Call the studio about Friday" aria-label="Add a task" autocomplete="off">'+
@@ -132,7 +133,7 @@ function todayHTML(){const t0=today();
   const focusDone=S.tasks.filter(t=>!isOpen(t)&&t.focusDate&&t.doneAt&&dstr(new Date(t.doneAt))===t0);
   const due=S.tasks.filter(t=>isOpen(t)&&t.due&&t.due<=addDays(t0,1)&&!inFocus(t)).sort(cmp);
   const ps=active(),nexts=[],none=[];
-  ps.forEach(p=>{const n=nextOf(p);if(!n)none.push(p);else if(!inFocus(n))nexts.push(n)});
+  ps.forEach(p=>{const n=nextOf(p);if(!n)none.push(p);else if(!inFocus(n)&&due.indexOf(n)<0)nexts.push(n)});
   const byClaude=S.tasks.filter(t=>t.doneBy==='claude'&&t.doneAt&&Date.now()-Date.parse(t.doneAt)<48*36e5).sort((a,b)=>String(b.doneAt).localeCompare(String(a.doneAt)));
   let h='<h1>Today</h1><p class="sub">'+esc(new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))+'</p>'+captureHTML(true)+eventsHTML();
   h+='<div class="label"><span>Focus</span><span class="r">'+focus.length+' of 3</span></div>';
@@ -209,7 +210,7 @@ function projectHTML(){const p=proj(S.pid),back='<a class="back" href="#projects
   let h=back+'<div class="head"><h1><span class="pdot" style="background:'+col(p)+'"></span>'+esc(p.name)+'</h1><button class="link" data-act="editproject">'+(S.editProject?'Done':'Edit')+'</button></div>';
   if(S.editProject)h+='<div class="form"><div class="fields"><label>Name<input type="text" id="pn-'+pid+'" data-ch="p-name" data-id="'+pid+'" value="'+esc(p.name)+'"></label><label>Area<input type="text" id="pa-'+pid+'" data-ch="p-area" data-id="'+pid+'" list="areas" value="'+esc(p.area||'')+'"></label></div>'+areaList()+swatches('pcolor',p.color,p.id)+'<div class="row"><button class="btn danger" data-act="archive" data-id="'+pid+'">Archive project</button></div></div>';
   if(nx){const id=esc(nx.id);h+='<div class="next"><div class="k">Next step</div><div class="t">'+esc(nx.title)+'</div><div class="chips">'+
-    '<button class="chip" data-act="toggle" data-id="'+id+'">'+ic('check',14)+'Done</button>'+chip('focus',nx.id,inFocus(nx),'Focus today')+chip('claude',nx.id,nx.owner==='claude',ic('spark',14)+(nx.owner==='claude'?'Queued for Claude':'Send to Claude'))+'</div></div>'}
+    '<button class="chip" data-act="toggle" data-id="'+id+'">'+ic('check',14)+'Done</button>'+chip('focus',nx.id,inFocus(nx),'Focus today')+'<button class="chip" data-act="send" data-id="'+id+'">'+ic('spark',14)+'Send to Claude</button>'+'</div></div>'}
   else h+='<div class="next"><div class="k">Next step</div><div class="t">'+(all.some(isOpen)?'Everything open is waiting on someone':'Nothing yet')+'</div><div style="color:var(--ink-2);font-size:14px">Add a task below and it becomes the next step.</div></div>';
   const hc=(k,l)=>'<button class="chip" data-act="hz" data-v="'+k+'" aria-pressed="'+(S.hz===k)+'">'+l+'</button>';
   h+='<div class="filters">'+hc('now','Now')+hc('next','Next')+hc('later','Later')+hc('all','All')+'<span class="gap"></span><button class="chip" data-act="urg" aria-pressed="'+S.urg+'">Urgent only</button></div>';
@@ -218,9 +219,13 @@ function projectHTML(){const p=proj(S.pid),back='<a class="back" href="#projects
   groups.push({m:null,ts:all.filter(t=>!mss.some(m=>m.id===t.milestoneId))});
   groups.forEach(g=>{const o=g.ts.filter(t=>isOpen(t)&&vis(t)).sort(cmp),d=g.ts.filter(t=>!isOpen(t)&&Date.parse(t.doneAt||0)>wk).sort((a,b)=>String(b.doneAt).localeCompare(String(a.doneAt)));
     const dn=g.ts.filter(t=>!isOpen(t)).length;
-    if(g.m){const mid=esc(g.m.id);h+=S.editProject?'<div class="routine" style="margin-top:22px"><input type="text" class="r-name" id="mn-'+mid+'" data-ch="ms-name" data-id="'+mid+'" value="'+esc(g.m.name)+'" aria-label="Milestone name"><button class="btn danger" data-act="msdel" data-id="'+mid+'">Delete</button></div>':'<div class="label"><span>'+esc(g.m.name)+'</span><span class="r">'+dn+' of '+g.ts.length+'</span></div>'}
-    else h+='<div class="label"><span>'+(mss.length?'Other tasks':'Tasks')+'</span>'+(g.ts.length?'<span class="r">'+dn+' of '+g.ts.length+'</span>':'')+'</div>';
-    h+=list(o.concat(d),{hz:S.hz==='all'})+addHTML(p.id,g.m?g.m.id:'');
+    h+='<section class="group'+(g.m&&S.freshMs===g.m.id?' fresh':'')+'" data-drop="ms:'+(g.m?esc(g.m.id):'')+'">';
+    if(g.m){const mid=esc(g.m.id);
+      h+=(S.editProject||S.renameMs===g.m.id)
+        ?'<div class="ms-head editing"><input type="text" class="r-name" id="mn-'+mid+'" data-ch="ms-name" data-id="'+mid+'" value="'+esc(g.m.name)+'" aria-label="Milestone name"><button class="btn danger" data-act="msdel" data-id="'+mid+'">Delete</button>'+(S.editProject?'':'<button class="btn" data-act="msrename" data-id="'+mid+'">Done</button>')+'</div>'
+        :'<div class="ms-head"><button class="ms-name" data-act="msrename" data-id="'+mid+'" aria-label="Rename milestone '+esc(g.m.name)+'"><span>'+esc(g.m.name)+'</span>'+ic('pencil',14)+'</button><span class="r">'+dn+' of '+g.ts.length+'</span></div>'}
+    else h+='<div class="ms-head"><span class="ms-name plain">'+(mss.length?'No milestone':'Tasks')+'</span>'+(g.ts.length?'<span class="r">'+dn+' of '+g.ts.length+'</span>':'')+'</div>';
+    h+=list(o.concat(d),{hz:S.hz==='all'})+addHTML(p.id,g.m?g.m.id:'')+'</section>';
   });
   h+='<form class="capture" data-form="addms" style="margin-top:28px"><input type="text" id="newms" name="q" placeholder="New milestone, like First release" aria-label="New milestone" autocomplete="off"><button class="btn" type="submit">Add milestone</button></form>';
   return h;
@@ -239,9 +244,9 @@ function doneHTML(){const lim=Date.now()-30*864e5,ts=S.tasks.filter(t=>!isOpen(t
 }
 function mainHTML(){if(S.auth!=='in')return authHTML();return (S.view==='done'?'':'')+statusBar()+(S.view==='projects'?projectsHTML():S.view==='project'?projectHTML():S.view==='inbox'?inboxHTML():S.view==='done'?doneHTML()+'<p class="signout"><button class="link" data-act="signout">Sign out</button></p>':todayHTML())}
 function sideHTML(){if(S.auth!=='in')return '';const open=S.tasks.filter(isOpen),inb=open.filter(t=>!proj(t.projectId)).length;
-  const a=(href,label,on,n,dot)=>'<a href="#'+href+'"'+(on?' aria-current="page"':'')+'>'+(dot||'')+'<span class="nm">'+esc(label)+'</span>'+(n?'<span class="n">'+n+'</span>':'')+'</a>';
-  let h='<div class="brand">Timely</div>'+a('today','Today',S.view==='today')+a('inbox','Inbox',S.view==='inbox',inb)+a('projects','All projects',S.view==='projects')+a('done','Done',S.view==='done');
-  areas().forEach(g=>{h+='<div class="slabel">'+esc(g.name)+'</div>'+g.items.map(p=>a('p-'+esc(p.id),p.name,S.view==='project'&&S.pid===p.id,open.filter(t=>t.projectId===p.id).length,'<span class="pdot" style="background:'+col(p)+'"></span>')).join('')});
+  const a=(href,label,on,n,dot,drop)=>'<a href="#'+href+'"'+(on?' aria-current="page"':'')+(drop?' data-drop="'+drop+'"':'')+'>'+(dot||'')+'<span class="nm">'+esc(label)+'</span>'+(n?'<span class="n">'+n+'</span>':'')+'</a>';
+  let h='<div class="brand">Timely</div>'+a('today','Today',S.view==='today')+a('inbox','Inbox',S.view==='inbox',inb,'','inbox')+a('projects','All projects',S.view==='projects')+a('done','Done',S.view==='done');
+  areas().forEach(g=>{h+='<div class="slabel">'+esc(g.name)+'</div>'+g.items.map(p=>a('p-'+esc(p.id),p.name,S.view==='project'&&S.pid===p.id,open.filter(t=>t.projectId===p.id).length,'<span class="pdot" style="background:'+col(p)+'"></span>','project:'+esc(p.id))).join('')});
   return h+'<div class="slabel"></div><button class="link" style="margin-left:8px" data-act="signout">Sign out</button>';
 }
 function tabsHTML(){if(S.auth!=='in')return '';const inb=S.tasks.filter(t=>isOpen(t)&&!proj(t.projectId)).length;
@@ -250,19 +255,40 @@ function tabsHTML(){if(S.auth!=='in')return '';const inb=S.tasks.filter(t=>isOpe
 }
 
 /* ---------- render ---------- */
-let down=false,downAt=0,pending=false,retry=0;
-function render(){
-  if(down&&Date.now()-downAt<1500){pending=true;clearTimeout(retry);retry=setTimeout(()=>{down=false;if(pending){pending=false;render()}},1600);return}
+let down=false,downAt=0,pending=false,retry=0,dragging=false;
+function render(force){
+  if(dragging&&!force){pending=true;return}
+  if(!force&&down&&Date.now()-downAt<800){pending=true;clearTimeout(retry);retry=setTimeout(()=>{down=false;if(pending)render()},850);return}
+  pending=false;
   const a=document.activeElement;let keep=null;
   if(a&&a.id&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))keep={id:a.id,v:a.value,s:a.selectionStart,e:a.selectionEnd,txt:a.tagName!=='SELECT'&&a.type!=='date'};
   document.getElementById('side').innerHTML=sideHTML();
   document.getElementById('main').innerHTML=mainHTML();
   document.getElementById('tabs').innerHTML=tabsHTML();document.getElementById('tabs').hidden=S.auth!=='in';
+  if(S.focusId){keep=null;const fe=document.getElementById(S.focusId);S.focusId=null;if(fe){fe.focus();if(fe.value&&fe.select)fe.select();if(fe.scrollIntoView)fe.scrollIntoView({block:'nearest'})}}
   if(keep){const el=document.getElementById(keep.id);if(el){if(keep.txt&&!el.readOnly)el.value=keep.v;el.focus({preventScroll:true});if(keep.txt){try{el.setSelectionRange(keep.s,keep.e)}catch(e){}}}}
 }
 addEventListener('pointerdown',()=>{down=true;downAt=Date.now()},true);
 const release=()=>setTimeout(()=>{down=false;if(pending){pending=false;render()}},0);
-addEventListener('pointerup',release,true);addEventListener('pointercancel',release,true);
+addEventListener('pointerup',release,true);addEventListener('pointercancel',release,true);addEventListener('mouseup',release,true);addEventListener('touchend',release,true);
+
+/* ---------- drag a task onto a milestone, a project, or the Inbox ---------- */
+let dragId=null,overEl=null;
+const dropZone=e=>e.target&&e.target.closest?e.target.closest('[data-drop]'):null;
+function setOver(el){if(overEl===el)return;if(overEl)overEl.classList.remove('drop-over');overEl=el;if(el)el.classList.add('drop-over')}
+function endDrag(){if(!dragId&&!dragging)return;dragId=null;dragging=false;setOver(null);document.body.classList.remove('is-dragging');render(true)}
+document.addEventListener('dragstart',e=>{const li=e.target&&e.target.closest?e.target.closest('li[data-task]'):null;if(!li)return;
+  dragId=li.dataset.task;dragging=true;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',dragId)}catch(x){}
+  li.classList.add('dragging');document.body.classList.add('is-dragging')});
+document.addEventListener('dragover',e=>{if(!dragId)return;const z=dropZone(e);setOver(z);if(z){e.preventDefault();e.dataTransfer.dropEffect='move'}});
+document.addEventListener('drop',e=>{if(!dragId)return;const z=dropZone(e);if(!z)return;e.preventDefault();const t=task(dragId),d=z.dataset.drop;
+  if(t){
+    if(d==='inbox'){if(t.projectId)upd('tasks',t.id,{projectId:null,milestoneId:null})}
+    else if(d.indexOf('project:')===0){const pid=d.slice(8);if(t.projectId!==pid)upd('tasks',t.id,{projectId:pid,milestoneId:null})}
+    else if(d.indexOf('ms:')===0){const ms=d.slice(3)||null,cur=S.milestones.some(m=>m.id===t.milestoneId)?t.milestoneId:null;if(cur!==ms||t.projectId!==S.pid)upd('tasks',t.id,{projectId:S.pid,milestoneId:ms})}
+  }
+  endDrag()});
+document.addEventListener('dragend',endDrag);
 
 /* ---------- actions ---------- */
 const A={
@@ -276,10 +302,18 @@ const A={
   pin(id){const t=task(id),p=t&&proj(t.projectId);if(p)upd('projects',p.id,{nextTaskId:p.nextTaskId===id?null:id})},
   del(id){S.confirmDel=id},
   delyes(id){write('tasks',id,null,'delete');S.open=null;S.confirmDel=null},
-  copy(id){const t=task(id);if(!t)return;const p=proj(t.projectId);
-    const text='From my Timely organizer'+(p?' (project: '+p.name+')':'')+': '+t.title+(t.notes?'\nNotes: '+t.notes:'')+'\nWhen it\'s finished, mark this task done in my organizer.';
-    const fallback=()=>{S.copy={id:id,text:text};render();const el=document.getElementById('ec-'+id);if(el){el.focus();el.select()}};
-    try{navigator.clipboard.writeText(text).then(()=>flashOk('Copied. Paste it into any Claude chat.'),fallback)}catch(e){fallback()}},
+  send(id){const t=task(id);if(!t)return;const p=proj(t.projectId),m=S.milestones.find(x=>x.id===t.milestoneId);
+    const lines=['Work on this task from my Timely organizer.','','Task: '+t.title];
+    if(p)lines.push('Project: '+p.name);if(m)lines.push('Milestone: '+m.name);if(t.due)lines.push('Due: '+t.due);
+    if(t.notes)lines.push('Notes: '+String(t.notes).slice(0,1500));
+    if(/^https:\/\//.test(t.sourceUrl||''))lines.push('Source: '+t.sourceUrl);
+    lines.push('','When it is finished, mark it done in Timely (my Supabase project next-steps, table tasks, id '+t.id+').');
+    const text=lines.join('\n');
+    if(t.owner!=='claude')upd('tasks',id,{owner:'claude'});
+    try{navigator.clipboard.writeText(text).catch(()=>{})}catch(e){}
+    let w=null;try{w=window.open('https://claude.ai/new?q='+encodeURIComponent(text),'_blank')}catch(e){}
+    if(w){try{w.opener=null}catch(e){}flash('Opened in Claude. The task is also on your clipboard.',true)}
+    else{S.open=id;S.copy={id:id,text:text};flash("If Claude didn't open, paste the text shown in the task into a Claude chat.",true)}},
   pf(_,el){S.pf=el.dataset.v;S.open=null},
   hz(_,el){S.hz=el.dataset.v},
   urg(){S.urg=!S.urg},
@@ -294,11 +328,16 @@ const A={
   pcolor(id,el){upd('projects',id,{color:el.dataset.v})},
   archive(id){upd('projects',id,{archived:true});S.editProject=false;location.hash='projects'},
   unarchive(id){upd('projects',id,{archived:false})},
-  msdel(id){write('milestones',id,null,'delete')},
+  msdel(id){write('milestones',id,null,'delete');S.renameMs=null},
+  msrename(id){S.renameMs=S.renameMs===id?null:id;S.focusId=S.renameMs?'mn-'+id:null},
   signout(){sb.auth.signOut()}
 };
-function flashOk(m){flash(m)}
-document.addEventListener('click',e=>{const el=e.target.closest('[data-act]');if(!el||el.disabled)return;const f=A[el.dataset.act];if(!f)return;f(el.dataset.id,el);render()});
+function flashOk(m){flash(m,true)}
+document.addEventListener('click',e=>{const tg=e.target&&e.target.closest?e.target:null;if(!tg)return;const el=tg.closest('[data-act]');let changed=false;
+  if(S.open&&!tg.closest('.editor')&&!(el&&el.dataset.act==='open')){S.open=null;S.confirmDel=null;S.copy=null;changed=true}
+  if(el&&!el.disabled){const f=A[el.dataset.act];if(f){f(el.dataset.id,el);changed=true}}
+  if(changed)render(true)});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape'||!S.open||(e.target&&e.target.dataset&&e.target.dataset.ch==='ms-name'))return;if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();S.open=null;S.confirmDel=null;S.copy=null;render(true)});
 document.addEventListener('change',e=>{const el=e.target,ch=el.dataset&&el.dataset.ch;if(!ch)return;const id=el.dataset.id,v=el.value,tv=v.trim();
   if(ch==='cap-p')S.capP=v;
   else if(ch==='t-title'){if(tv)upd('tasks',id,{title:tv})}
@@ -309,27 +348,30 @@ document.addEventListener('change',e=>{const el=e.target,ch=el.dataset&&el.datas
   else if(ch==='t-due')upd('tasks',id,{due:v||null});
   else if(ch==='p-name'){if(tv)upd('projects',id,{name:tv})}
   else if(ch==='p-area'){if(tv)upd('projects',id,{area:tv})}
-  else if(ch==='ms-name'){if(tv)upd('milestones',id,{name:tv})}
+  else if(ch==='ms-name'){if(tv)upd('milestones',id,{name:tv});S.renameMs=null}
   else if(ch==='r-name'){if(tv)upd('routines',id,{name:tv})}
   if(ch!=='cap-p')render();
 });
-document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.tagName==='INPUT'&&e.target.dataset.ch&&!e.target.form)e.target.blur()});
+document.addEventListener('keydown',e=>{const t=e.target;if(!t||t.tagName!=='INPUT'||!t.dataset.ch||t.form)return;
+  if(e.key==='Enter'){t.blur();if(t.dataset.ch==='ms-name'){S.renameMs=null;render(true)}}
+  else if(e.key==='Escape'&&t.dataset.ch==='ms-name'){const m=S.milestones.find(x=>x.id===t.dataset.id);if(m)t.value=m.name;S.renameMs=null;render(true)}});
 document.addEventListener('submit',e=>{const f=e.target,k=f.dataset.form;if(!k)return;e.preventDefault();
   if(k==='signin'){signin(f,e.submitter&&e.submitter.value==='up'?'up':'in');return}
   const inp=f.querySelector('[name=q]'),v=((inp&&inp.value)||'').trim();if(!v){if(inp)inp.focus();return}
   if(k==='capture')newTask(v,S.view==='inbox'?null:(S.capP||null),null,'now');
   else if(k==='addtask')newTask(v,f.dataset.pid,f.dataset.ms||null,S.hz==='all'?'now':S.hz);
-  else if(k==='addms')write('milestones',slug(S.pid+'-'+v),{projectId:S.pid,name:v,sort:Date.now(),createdAt:now(),updatedAt:now()});
+  else if(k==='addms'){const mid=write('milestones',slug(S.pid+'-'+v),{projectId:S.pid,name:v,sort:Date.now(),createdAt:now(),updatedAt:now()});
+    if(mid){S.freshMs=mid;S.focusId='add-'+S.pid+'-'+mid;setTimeout(()=>{S.freshMs=null},1800)}}
   else if(k==='addroutine')write('routines',null,{name:v,target:3,log:[],sort:Date.now(),updatedAt:now()});
   else if(k==='addproject'){const area=(f.querySelector('[name=area]').value||'').trim()||'Work',id=slug(v);
     write('projects',id,{name:v,area:area,color:S.newColor,sort:Date.now(),archived:false,nextTaskId:null,createdAt:now(),updatedAt:now()});S.addProject=false;inp.value='';location.hash='p-'+id;return}
-  inp.value='';render();
+  inp.value='';if(S.focusId&&document.activeElement)document.activeElement.blur();render(true);
 });
 
 /* ---------- routing and data ---------- */
 function route(first){const h=(location.hash||'').slice(1);
   if(h.indexOf('p-')===0){S.view='project';S.pid=h.slice(2)}else S.view=['today','projects','inbox','done'].indexOf(h)>=0?h:'today';
-  S.open=null;S.editProject=false;S.confirmDel=null;S.copy=null;S.urg=false;render();if(first!==true)window.scrollTo(0,0)}
+  S.open=null;S.editProject=false;S.confirmDel=null;S.copy=null;S.urg=false;S.renameMs=null;render(true);if(first!==true)window.scrollTo(0,0)}
 addEventListener('hashchange',route);
 document.addEventListener('visibilitychange',()=>{if(document.hidden||S.auth!=='in')return;if(Date.now()-S.loadedAt>20000)loadAll();else render()});
 addEventListener('online',()=>{if(S.auth==='in'){loadAll();subscribe()}});
