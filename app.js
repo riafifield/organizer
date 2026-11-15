@@ -208,7 +208,7 @@ function projectHTML(){const p=proj(S.pid),back='<a class="back" href="#projects
   if(!p)return back+'<p class="empty">'+(S.status==='ready'?'This project is gone. Choose another from Projects.':'')+'</p>';
   const pid=esc(p.id),all=S.tasks.filter(t=>t.projectId===p.id),nx=nextOf(p),mss=S.milestones.filter(m=>m.projectId===p.id).sort(ord);
   let h=back+'<div class="head"><h1><span class="pdot" style="background:'+col(p)+'"></span>'+esc(p.name)+'</h1><button class="link" data-act="editproject">'+(S.editProject?'Done':'Edit')+'</button></div>';
-  if(S.editProject)h+='<div class="form"><div class="fields"><label>Name<input type="text" id="pn-'+pid+'" data-ch="p-name" data-id="'+pid+'" value="'+esc(p.name)+'"></label><label>Area<input type="text" id="pa-'+pid+'" data-ch="p-area" data-id="'+pid+'" list="areas" value="'+esc(p.area||'')+'"></label></div>'+areaList()+swatches('pcolor',p.color,p.id)+'<div class="row"><button class="btn danger" data-act="archive" data-id="'+pid+'">Archive project</button></div></div>';
+  if(S.editProject)h+='<div class="form"><div class="fields"><label>Name<input type="text" id="pn-'+pid+'" data-ch="p-name" data-id="'+pid+'" value="'+esc(p.name)+'"></label><label>Area<input type="text" id="pa-'+pid+'" data-ch="p-area" data-id="'+pid+'" list="areas" value="'+esc(p.area||'')+'"></label></div><div class="fields"><label>Folder on your Mac, used by Send to Claude<input type="text" id="pf-'+pid+'" data-ch="p-folder" data-id="'+pid+'" value="'+esc(p.folder||'')+'" placeholder="/Users/you/Projects/name" autocomplete="off" spellcheck="false"></label></div>'+areaList()+swatches('pcolor',p.color,p.id)+'<div class="row"><button class="btn danger" data-act="archive" data-id="'+pid+'">Archive project</button></div></div>';
   if(nx){const id=esc(nx.id);h+='<div class="next"><div class="k">Next step</div><div class="t">'+esc(nx.title)+'</div><div class="chips">'+
     '<button class="chip" data-act="toggle" data-id="'+id+'">'+ic('check',14)+'Done</button>'+chip('focus',nx.id,inFocus(nx),'Focus today')+'<button class="chip" data-act="send" data-id="'+id+'">'+ic('spark',14)+'Send to Claude</button>'+'</div></div>'}
   else h+='<div class="next"><div class="k">Next step</div><div class="t">'+(all.some(isOpen)?'Everything open is waiting on someone':'Nothing yet')+'</div><div style="color:var(--ink-2);font-size:14px">Add a task below and it becomes the next step.</div></div>';
@@ -291,6 +291,7 @@ document.addEventListener('drop',e=>{if(!dragId)return;const z=dropZone(e);if(!z
 document.addEventListener('dragend',endDrag);
 
 /* ---------- actions ---------- */
+function openLink(u,newTab){const a=document.createElement('a');a.href=u;a.rel='noopener';if(newTab)a.target='_blank';a.style.display='none';document.body.appendChild(a);a.click();a.remove()}
 const A={
   toggle(id){const t=task(id);if(!t)return;if(isOpen(t))upd('tasks',id,{status:'done',doneAt:now(),doneBy:'me'});else upd('tasks',id,{status:'open',doneAt:null,doneBy:null})},
   open(id){S.open=S.open===id?null:id;S.confirmDel=null;S.copy=null},
@@ -311,9 +312,10 @@ const A={
     const text=lines.join('\n');
     if(t.owner!=='claude')upd('tasks',id,{owner:'claude'});
     try{navigator.clipboard.writeText(text).catch(()=>{})}catch(e){}
-    let w=null;try{w=window.open('https://claude.ai/new?q='+encodeURIComponent(text),'_blank')}catch(e){}
-    if(w){try{w.opener=null}catch(e){}flash('Opened in Claude. The task is also on your clipboard.',true)}
-    else{S.open=id;S.copy={id:id,text:text};flash("If Claude didn't open, paste the text shown in the task into a Claude chat.",true)}},
+    const mac=/Mac/.test(navigator.platform||'')&&!(navigator.maxTouchPoints>1);
+    const url=mac?'claude://code/new?q='+encodeURIComponent(text)+(p&&p.folder?'&folder='+encodeURIComponent(p.folder):''):'https://claude.ai/code?prompt='+encodeURIComponent(text);
+    openLink(url,!mac);
+    flash(mac?'Opening the Claude app with this task. If nothing opens, paste it there: the task is on your clipboard.':'Opening Claude. If the task is not filled in, paste it from your clipboard.',true)},
   pf(_,el){S.pf=el.dataset.v;S.open=null},
   hz(_,el){S.hz=el.dataset.v},
   urg(){S.urg=!S.urg},
@@ -348,6 +350,7 @@ document.addEventListener('change',e=>{const el=e.target,ch=el.dataset&&el.datas
   else if(ch==='t-due')upd('tasks',id,{due:v||null});
   else if(ch==='p-name'){if(tv)upd('projects',id,{name:tv})}
   else if(ch==='p-area'){if(tv)upd('projects',id,{area:tv})}
+  else if(ch==='p-folder')upd('projects',id,{folder:tv||null});
   else if(ch==='ms-name'){if(tv)upd('milestones',id,{name:tv});S.renameMs=null}
   else if(ch==='r-name'){if(tv)upd('routines',id,{name:tv})}
   if(ch!=='cap-p')render();

@@ -1,5 +1,5 @@
 // Network first, so the app is always current when online; the cached copy opens it offline.
-const CACHE = 'timely-v3';
+const CACHE = 'timely-v4';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'vendor/supabase.js', 'manifest.webmanifest', 'icons/icon-192.png'];
 
 self.addEventListener('install', e => {
