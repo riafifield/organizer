@@ -409,9 +409,25 @@ function leave(){
   TABLES.forEach(t=>{S[t]=[]});clearCache();S.auth='out';
   if(was!=='out')render();
 }
+/* ---------- pick up new versions without a manual reload ---------- */
+const MY_V=(function(){const s=document.querySelector('script[src*="app.js"]');const m=s&&/[?&]v=(\d+)/.exec(s.src);return m?m[1]:null})();
+let lastCheck=0;
+async function checkUpdate(){
+  if(!MY_V||Date.now()-lastCheck<120000)return;lastCheck=Date.now();
+  try{const r=await fetch('index.html?t='+Date.now(),{cache:'no-store'});if(!r.ok)return;
+    const m=/app\.js\?v=(\d+)/.exec(await r.text());if(!m||m[1]===MY_V)return;
+    const a=document.activeElement,typing=a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)&&a.value;
+    if(typing||S.open||dragging){lastCheck=0;return}
+    location.reload();
+  }catch(e){}
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkUpdate()});
+addEventListener('focus',checkUpdate);
+setInterval(()=>{if(!document.hidden)checkUpdate()},15*60000);
 function boot(){
   loadCache();route(true);
   if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+  checkUpdate();
   sb.auth.onAuthStateChange((ev,session)=>{setTimeout(()=>{if(session)enter();else leave()},0)});
 }
 boot();
