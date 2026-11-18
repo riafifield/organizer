@@ -32,15 +32,17 @@ function weekDates(){const t=today(),dow=(parseD(t).getDay()+6)%7,m=addDays(t,-d
 
 const ord=(a,b)=>((a.sort==null?0:a.sort)-(b.sort==null?0:b.sort))||String(a.name||'').localeCompare(String(b.name||''));
 const hzRank={now:0,next:1,later:2};
-const cmp=(a,b)=>((hzRank[a.horizon]||0)-(hzRank[b.horizon]||0))||((b.urgent?1:0)-(a.urgent?1:0))||String(a.due||'9999').localeCompare(String(b.due||'9999'))||String(a.createdAt||'').localeCompare(String(b.createdAt||''));
+const cmp=(a,b)=>((hzRank[a.horizon]||0)-(hzRank[b.horizon]||0))||((a.status==='in_progress'?0:1)-(b.status==='in_progress'?0:1))||((b.urgent?1:0)-(a.urgent?1:0))||String(a.due||'9999').localeCompare(String(b.due||'9999'))||String(a.createdAt||'').localeCompare(String(b.createdAt||''));
 const proj=id=>S.projects.find(p=>p.id===id)||null;
 const task=id=>S.tasks.find(t=>t.id===id)||null;
 const col=p=>COLORS[p&&p.color]||COLORS.slate;
 const active=()=>S.projects.filter(p=>!p.archived).sort(ord);
 const isOpen=t=>t.status!=='done';
+const STATUS=[['open','To do'],['in_progress','In progress'],['waiting','Waiting on someone'],['on_hold','On hold'],['done','Done']];
+const parked=t=>t.status==='waiting'||t.status==='on_hold';
 const inFocus=t=>isOpen(t)&&t.focusDate&&t.focusDate<=today();
 function areas(){const out=[];active().forEach(p=>{const a=p.area||'Other';let g=out.find(x=>x.name===a);if(!g){g={name:a,items:[]};out.push(g)}g.items.push(p)});return out}
-function nextOf(p){const open=S.tasks.filter(t=>t.projectId===p.id&&isOpen(t));const pin=open.find(t=>t.id===p.nextTaskId);if(pin)return pin;return open.filter(t=>t.status!=='waiting').sort(cmp)[0]||null}
+function nextOf(p){const open=S.tasks.filter(t=>t.projectId===p.id&&isOpen(t));const pin=open.find(t=>t.id===p.nextTaskId);if(pin)return pin;return open.filter(t=>!parked(t)).sort((a,b)=>((a.status==='in_progress'?0:1)-(b.status==='in_progress'?0:1))||cmp(a,b))[0]||null}
 function quietDays(p){const ts=S.tasks.filter(t=>t.projectId===p.id);if(!ts.some(isOpen))return 0;const last=Math.max.apply(null,ts.map(t=>Date.parse(t.updatedAt||t.createdAt||0)||0));return last?Math.floor((Date.now()-last)/864e5):0}
 
 /* ---------- saving ---------- */
@@ -83,14 +85,16 @@ function taskRow(t,o){o=o||{};const done=!isOpen(t),p=proj(t.projectId),t0=today
   if(!done){
     if(t.urgent)meta.push('<span class="tag urgent">Urgent</span>');
     if(t.due)meta.push('<span class="'+(t.due<t0?'over':'')+'">'+esc(fmtDue(t.due))+'</span>');
+    if(t.status==='in_progress')meta.push('<span class="tag prog">In progress</span>');
     if(t.status==='waiting')meta.push('<span class="tag wait">Waiting</span>');
+    if(t.status==='on_hold')meta.push('<span class="tag hold">On hold</span>');
     if(t.owner==='claude')meta.push('<span class="tag claude">For Claude</span>');
     if(o.hz&&t.horizon&&t.horizon!=='now')meta.push('<span>'+(t.horizon==='next'?'Next':'Later')+'</span>');
     if(t.notes&&S.open!==t.id)meta.push('<span>Has notes</span>');
   }else meta.push('<span>'+(t.doneBy==='claude'?'Checked off by Claude':'Done')+' · '+esc(fmtDay(t.doneAt))+'</span>');
   const id=esc(t.id),foc=inFocus(t);
   return '<li class="task'+(done?' done':'')+'" data-task="'+id+'"'+(S.open===t.id?'':' draggable="true"')+'>'+
-    '<button class="cb" data-act="toggle" data-id="'+id+'" aria-pressed="'+done+'" aria-label="'+(done?'Reopen':'Mark done')+': '+esc(t.title)+'">'+ic('check',14)+'</button>'+
+    '<button class="cb'+(t.status==='in_progress'?' prog':'')+'" data-act="toggle" data-id="'+id+'" aria-pressed="'+done+'" aria-label="'+(done?'Reopen':'Mark done')+': '+esc(t.title)+'">'+ic('check',14)+'</button>'+
     '<div class="tbody"><button class="ttitle" data-act="open" data-id="'+id+'" aria-expanded="'+(S.open===t.id)+'">'+esc(t.title)+'</button>'+
     '<div class="tmeta">'+meta.join('')+'</div>'+(S.open===t.id?editorHTML(t):'')+'</div>'+
     (done?'':'<button class="star" data-act="focus" data-id="'+id+'" aria-pressed="'+!!foc+'" aria-label="'+(foc?'Remove from today':'Focus on this today')+'">'+ic('star')+'</button>')+
@@ -102,7 +106,8 @@ function editorHTML(t){const id=esc(t.id),p=proj(t.projectId),ms=S.milestones.fi
   return '<div class="editor">'+
    '<input type="text" id="et-'+id+'" data-ch="t-title" data-id="'+id+'" value="'+esc(t.title)+'" aria-label="Task name">'+
    '<textarea id="en-'+id+'" data-ch="t-notes" data-id="'+id+'" rows="2" placeholder="Notes, links, or context for Claude" aria-label="Notes">'+esc(t.notes)+'</textarea>'+
-   '<div class="chips">'+chip('urgent',t.id,t.urgent,'Urgent')+chip('waiting',t.id,t.status==='waiting','Waiting on someone')+
+   '<div class="strow"><span class="k">Status</span><div class="chips" role="group" aria-label="Status">'+STATUS.map(s=>'<button class="chip" data-act="status" data-v="'+s[0]+'" data-id="'+id+'" aria-pressed="'+((t.status||'open')===s[0])+'">'+s[1]+'</button>').join('')+'</div></div>'+
+   '<div class="chips">'+chip('urgent',t.id,t.urgent,'Urgent')+
      chip('claude',t.id,t.owner==='claude',ic('spark',14)+'For Claude')+(p?chip('pin',t.id,p.nextTaskId===t.id,'Next step'):'')+'</div>'+
    '<div class="fields">'+
      '<label>Project<select id="ep-'+id+'" data-ch="t-project" data-id="'+id+'">'+projectOptions(t.projectId)+'</select></label>'+
@@ -132,13 +137,15 @@ function todayHTML(){const t0=today();
   const focus=S.tasks.filter(inFocus).sort(cmp);
   const focusDone=S.tasks.filter(t=>!isOpen(t)&&t.focusDate&&t.doneAt&&dstr(new Date(t.doneAt))===t0);
   const due=S.tasks.filter(t=>isOpen(t)&&t.due&&t.due<=addDays(t0,1)&&!inFocus(t)).sort(cmp);
+  const prog=S.tasks.filter(t=>t.status==='in_progress'&&!inFocus(t)&&due.indexOf(t)<0).sort(cmp);
   const ps=active(),nexts=[],none=[];
-  ps.forEach(p=>{const n=nextOf(p);if(!n)none.push(p);else if(!inFocus(n)&&due.indexOf(n)<0)nexts.push(n)});
+  ps.forEach(p=>{const n=nextOf(p);if(!n)none.push(p);else if(!inFocus(n)&&due.indexOf(n)<0&&prog.indexOf(n)<0)nexts.push(n)});
   const byClaude=S.tasks.filter(t=>t.doneBy==='claude'&&t.doneAt&&Date.now()-Date.parse(t.doneAt)<48*36e5).sort((a,b)=>String(b.doneAt).localeCompare(String(a.doneAt)));
   let h='<h1>Today</h1><p class="sub">'+esc(new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))+'</p>'+captureHTML(true)+eventsHTML();
   h+='<div class="label"><span>Focus</span><span class="r">'+focus.length+' of 3</span></div>';
   h+=(focus.length||focusDone.length)?list(focus.concat(focusDone),{proj:true}):'<p class="empty">Pick up to three things for today. Tap the star on any task.</p>';
   if(due.length)h+='<div class="label"><span>Due</span></div>'+list(due,{proj:true});
+  if(prog.length)h+='<div class="label"><span>In progress</span></div>'+list(prog,{proj:true});
   if(nexts.length||none.length){h+='<div class="label"><span>Next step in each project</span></div>'+list(nexts,{proj:true});
     if(none.length)h+='<p class="empty" style="margin-top:10px">No next step yet: '+none.map(p=>'<a class="plink" href="#p-'+esc(p.id)+'"><span class="pdot" style="background:'+col(p)+'"></span>'+esc(p.name)+'</a>').join(', ')+'</p>'}
   else if(S.status==='ready'&&!ps.length)h+='<div class="label"><span>Projects</span></div><p class="empty">No projects yet. <a class="link" href="#projects">Add your first project</a></p>';
@@ -183,9 +190,9 @@ function routinesHTML(){const rs=S.routines.slice().sort(ord),wk=weekDates(),t0=
   return h;
 }
 function projectsHTML(){const open=S.tasks.filter(isOpen),f=S.pf;
-  const counts={urgent:open.filter(t=>t.urgent).length,claude:open.filter(t=>t.owner==='claude').length,waiting:open.filter(t=>t.status==='waiting').length};
+  const counts={urgent:open.filter(t=>t.urgent).length,claude:open.filter(t=>t.owner==='claude').length,waiting:open.filter(t=>t.status==='waiting').length,progress:open.filter(t=>t.status==='in_progress').length};
   const fc=(k,label)=>'<button class="chip" data-act="pf" data-v="'+k+'" aria-pressed="'+(f===k)+'">'+label+(k!=='all'?' <span class="n">'+counts[k]+'</span>':'')+'</button>';
-  let h='<h1>Projects</h1><div class="filters">'+fc('all','All')+fc('urgent','Urgent')+fc('claude','For Claude')+fc('waiting','Waiting')+'</div>';
+  let h='<h1>Projects</h1><div class="filters">'+fc('all','All')+fc('progress','In progress')+fc('urgent','Urgent')+fc('claude','For Claude')+fc('waiting','Waiting')+'</div>';
   if(f==='all'){
     const as=areas();
     if(!as.length&&S.status==='ready')h+='<p class="empty" style="margin-top:20px">Each project keeps its own milestones, tasks, and one next step.</p>';
@@ -195,8 +202,8 @@ function projectsHTML(){const open=S.tasks.filter(isOpen),f=S.pf;
     const arch=S.projects.filter(p=>p.archived).sort(ord);
     if(arch.length)h+='<div class="label"><span>Archived</span></div>'+arch.map(p=>'<div class="routine"><span class="r-name">'+esc(p.name)+'</span><button class="btn" data-act="unarchive" data-id="'+esc(p.id)+'">Restore</button></div>').join('');
   }else{
-    const m=open.filter(t=>f==='urgent'?t.urgent:f==='claude'?t.owner==='claude':t.status==='waiting').sort(cmp);
-    if(!m.length)h+='<p class="empty" style="margin-top:20px">'+(f==='urgent'?'Nothing is marked urgent.':f==='claude'?'Nothing is queued for Claude. Open a task and choose For Claude to hand it over.':'Nothing is waiting on anyone.')+'</p>';
+    const m=open.filter(t=>f==='urgent'?t.urgent:f==='claude'?t.owner==='claude':f==='progress'?t.status==='in_progress':t.status==='waiting').sort(cmp);
+    if(!m.length)h+='<p class="empty" style="margin-top:20px">'+(f==='progress'?'Nothing is in progress.':f==='urgent'?'Nothing is marked urgent.':f==='claude'?'Nothing is queued for Claude. Open a task and choose For Claude to hand it over.':'Nothing is waiting on anyone.')+'</p>';
     else h+='<div style="margin-top:14px">'+list(m,{proj:true,hz:true})+'</div>';
   }
   return h;
@@ -210,8 +217,8 @@ function projectHTML(){const p=proj(S.pid),back='<a class="back" href="#projects
   let h=back+'<div class="head"><h1><span class="pdot" style="background:'+col(p)+'"></span>'+esc(p.name)+'</h1><button class="link" data-act="editproject">'+(S.editProject?'Done':'Edit')+'</button></div>';
   if(S.editProject)h+='<div class="form"><div class="fields"><label>Name<input type="text" id="pn-'+pid+'" data-ch="p-name" data-id="'+pid+'" value="'+esc(p.name)+'"></label><label>Area<input type="text" id="pa-'+pid+'" data-ch="p-area" data-id="'+pid+'" list="areas" value="'+esc(p.area||'')+'"></label></div><div class="fields"><label>Folder on your Mac, used by Send to Claude<input type="text" id="pf-'+pid+'" data-ch="p-folder" data-id="'+pid+'" value="'+esc(p.folder||'')+'" placeholder="/Users/you/Projects/name" autocomplete="off" spellcheck="false"></label></div>'+areaList()+swatches('pcolor',p.color,p.id)+'<div class="row"><button class="btn danger" data-act="archive" data-id="'+pid+'">Archive project</button></div></div>';
   if(nx){const id=esc(nx.id);h+='<div class="next"><div class="k">Next step</div><div class="t">'+esc(nx.title)+'</div><div class="chips">'+
-    '<button class="chip" data-act="toggle" data-id="'+id+'">'+ic('check',14)+'Done</button>'+chip('focus',nx.id,inFocus(nx),'Focus today')+'<button class="chip" data-act="send" data-id="'+id+'">'+ic('spark',14)+'Send to Claude</button>'+'</div></div>'}
-  else h+='<div class="next"><div class="k">Next step</div><div class="t">'+(all.some(isOpen)?'Everything open is waiting on someone':'Nothing yet')+'</div><div style="color:var(--ink-2);font-size:14px">Add a task below and it becomes the next step.</div></div>';
+    '<button class="chip" data-act="toggle" data-id="'+id+'">'+ic('check',14)+'Done</button>'+chip('prog',nx.id,nx.status==='in_progress','In progress')+chip('focus',nx.id,inFocus(nx),'Focus today')+'<button class="chip" data-act="send" data-id="'+id+'">'+ic('spark',14)+'Send to Claude</button>'+'</div></div>'}
+  else h+='<div class="next"><div class="k">Next step</div><div class="t">'+(all.some(isOpen)?'Everything open is waiting or on hold':'Nothing yet')+'</div><div style="color:var(--ink-2);font-size:14px">Add a task below and it becomes the next step.</div></div>';
   const hc=(k,l)=>'<button class="chip" data-act="hz" data-v="'+k+'" aria-pressed="'+(S.hz===k)+'">'+l+'</button>';
   h+='<div class="filters">'+hc('now','Now')+hc('next','Next')+hc('later','Later')+hc('all','All')+'<span class="gap"></span><button class="chip" data-act="urg" aria-pressed="'+S.urg+'">Urgent only</button></div>';
   const vis=t=>(S.hz==='all'||(t.horizon||'now')===S.hz)&&(!S.urg||t.urgent),wk=Date.now()-7*864e5;
@@ -298,7 +305,8 @@ const A={
   focus(id){const t=task(id);if(!t)return;if(inFocus(t)){upd('tasks',id,{focusDate:null});return}
     if(S.tasks.filter(inFocus).length>=3){flash('Focus holds three. Finish one or remove its star first.');return}upd('tasks',id,{focusDate:today()})},
   urgent(id){const t=task(id);if(t)upd('tasks',id,{urgent:!t.urgent})},
-  waiting(id){const t=task(id);if(t)upd('tasks',id,{status:t.status==='waiting'?'open':'waiting'})},
+  status(id,el){const t=task(id),v=el&&el.dataset.v;if(!t||!v||t.status===v)return;if(v==='done')upd('tasks',id,{status:'done',doneAt:now(),doneBy:'me'});else upd('tasks',id,{status:v,doneAt:null,doneBy:null})},
+  prog(id){const t=task(id);if(t)upd('tasks',id,{status:t.status==='in_progress'?'open':'in_progress'})},
   claude(id){const t=task(id);if(t)upd('tasks',id,{owner:t.owner==='claude'?'me':'claude'})},
   pin(id){const t=task(id),p=t&&proj(t.projectId);if(p)upd('projects',p.id,{nextTaskId:p.nextTaskId===id?null:id})},
   del(id){S.confirmDel=id},

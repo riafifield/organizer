@@ -191,3 +191,8 @@ li.task[draggable=true] button{cursor:pointer}
 .erow .btn{display:inline-flex;align-items:center;gap:6px}
 .erow{justify-content:flex-start}
 .erow .gap{flex:1}
+.tag.prog{background:var(--accent-soft);color:var(--accent-text)}
+.tag.hold{background:var(--fill);color:var(--ink-2)}
+.cb.prog{border-color:var(--accent-text);background:linear-gradient(90deg,var(--accent) 50%,transparent 50%)}
+.strow{display:grid;gap:5px}
+.strow .k{font-size:12px;color:var(--ink-3)}
